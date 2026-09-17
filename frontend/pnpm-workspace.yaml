@@ -1,0 +1,5 @@
+# 本工程改用 npm 管理依赖 —— 见 docs/DESIGN.md §11：
+# pnpm 11 在本机会把 @types/react、@types/react-dom 装成空目录（.ignored_*），
+# tsc 因此报 TS2688。npm 不受影响。
+#
+# 这个文件是之前 pnpm install 留下的残留，npm 不会读取它，保留仅为记录。

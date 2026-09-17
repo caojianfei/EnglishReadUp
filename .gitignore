@@ -1,0 +1,32 @@
+# 环境与密钥
+.env
+
+# ===== backend/data/ —— 全部不入版本控制 =====
+#   english.db (+ -wal/-shm)   运行时状态 + 用户学习痕迹，不是源码
+#   raw/  assets/  audio/      抓来的第三方正文 / 图片 / 录音（红线 6：不公开分发，仓库一公开即成转载）
+#   exports/                   由 scripts/export_md.py 重新生成
+#   m0/  *_shots/  diag-*      里程碑留档：样本同属第三方内容，截图可重跑
+# 将来若确有需要入库的 fixture，在本行之后单独放行（须先放行目录本身）：
+#   !/backend/data/m0/
+#   !/backend/data/m0/*.json
+/backend/data/*
+!/backend/data/.gitkeep
+
+# 开发过程中的临时输出（PowerShell 抓不到 stdout，脚本一律落文件）
+_*.txt
+_*.mjs
+
+# IDE / 助手工具数据（会话计划等，不属于代码交付物）
+.codebuddy/
+.workbuddy/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
