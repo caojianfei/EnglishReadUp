@@ -30,3 +30,5 @@ venv/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+WINDOWS_SERVICE.md

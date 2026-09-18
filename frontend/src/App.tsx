@@ -25,7 +25,11 @@ export default function App() {
   const patch = (p: Partial<ReadingPrefs>) => setPrefs((prev) => ({ ...prev, ...p }))
 
   return (
-    <div data-theme={prefs.theme} className="min-h-screen" style={{ background: 'var(--panel)' }}>
+    <div
+      data-theme={prefs.theme}
+      className="min-h-screen"
+      style={{ background: 'var(--panel)', color: 'var(--ink)' }}
+    >
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/vocab" element={<Vocab />} />
