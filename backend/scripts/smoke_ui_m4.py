@@ -126,10 +126,19 @@ ROW_JS = """
 () => {
   const rows = [...document.querySelectorAll('[data-testid="vocab-row"]')];
   return rows.map((r) => {
-    const ph = r.querySelector('[data-testid="vocab-phonetic"]');
+    // 音标行（M12 起英美并排）：每条音标是一个节点，第一个是主音标 ——
+    // 后端 `dictionary.primary_phonetic` 是「美音优先」，接口的 `phonetic`
+    // 给的就是它，所以显示层的对账拿第一个节点比。
+    // 选择器必须同时卡 `data-phonetic`：**喇叭按钮也带 `data-accent`**
+    // （那是它要播的口音），只按 data-accent 找会把两个喇叭也算成两条音标。
+    const line = r.querySelector('[data-testid="vocab-phonetic"]');
+    const nodes = line ? [...line.querySelectorAll('[data-accent][data-phonetic]')] : [];
+    const primary = nodes.length ? nodes[0] : null;
     return {
       lemma: r.dataset.lemma,
-      phoneticShown: ph ? ph.textContent : null,
+      phoneticShown: primary ? primary.textContent : null,
+      phoneticRaw: primary ? primary.getAttribute('data-phonetic') : null,
+      phoneticAccents: nodes.map((s) => s.dataset.accent),
       activeStatus: [...r.querySelectorAll('[data-testid^="status-"]')]
         .filter((b) => b.dataset.on === '1')
         .map((b) => b.dataset.testid.replace('status-', '')),
@@ -204,6 +213,13 @@ async def main() -> None:  # noqa: C901
     aid = art["id"]
     print(f"  样本：#{aid} {art['title'][:40]!r}", flush=True)
 
+    # [D3] 要删「最新一条 AI 流水」，判据是它是否**本轮新产生**的。这个脚本自己
+    # 不调模型（入册走本地词典查询），所以最新那条多半是用户自己的历史 ——
+    # 不设这条护栏就会把人家的解析记录删掉（M12 实测连删过两条）。下限在起手
+    # 时取一次，[D3] 只删 id 比它大的。
+    log_ids = api("/api/ai/logs?limit=1")["items"]
+    newest_log_at_start = int(log_ids[0]["id"]) if log_ids else 0
+
     throwaway, throw_word = ensure_throwaway_vocab(aid, int(time.time()) % len(THROWAWAY_POOL))
     print(f"  （造了一次性生词 {throw_word!r} #{throwaway}）", flush=True)
 
@@ -259,6 +275,22 @@ async def main() -> None:  # noqa: C901
         check(bool(shown), "至少有一条渲染了音标", f"{len(shown)} 条")
         bad = [s for s in shown if s[1] != (s[2] or "").replace("ɹ", "r")]
         check(not bad, "显示层只做 ɹ→r 的替换", str(bad[:2]))
+        # M12：英美两条都摆出来 —— 接口两侧都有且不相同的词，卡上也该有两条。
+        # （两侧相同时只显示一条是刻意的：并排两条一模一样的纯属噪声。）
+        both = [
+            r for r in rows
+            if (by_lemma.get(r["lemma"], {}).get("phonetic_uk")
+                and by_lemma.get(r["lemma"], {}).get("phonetic_us")
+                and by_lemma[r["lemma"]]["phonetic_uk"] != by_lemma[r["lemma"]]["phonetic_us"])
+        ]
+        if both:
+            thin = [(r["lemma"], r["phoneticAccents"]) for r in both
+                    if sorted(r["phoneticAccents"]) != ["uk", "us"]]
+            check(not thin, "英美两条都渲染出来了", str(thin[:2]))
+            raw_ok = [r["lemma"] for r in both if not r["phoneticRaw"]]
+            check(not raw_ok, "音标节点带词典原文（data-phonetic）", str(raw_ok[:2]))
+        else:
+            print("  （样本里没有英美音标不同的词，跳过两条并排的断言）", flush=True)
         has_rhotic = [s for s in shown if "ɹ" in (s[2] or "")]
         if has_rhotic:
             check(all("ɹ" not in s[1] for s in has_rhotic),
@@ -272,7 +304,9 @@ async def main() -> None:  # noqa: C901
         # ---- 发音：能播的都得有喇叭，且指向本机端点 ----
         # M10 起一个词有英美**两个槽**：只要**有一个**不是 missing 就该画喇叭
         # （点哪个下哪个）；两个都 missing 才是真没录音，不画。
-        # 页面上第一个按钮是英音（uk 在前），所以 ROW_JS 取到的 audioUrl 就是它。
+        # ROW_JS 取的是行里第一个喇叭。M12 起音标按「美 → 英」排列、喇叭跟在自己
+        # 那条音标后面，所以第一个多半是美音（两侧相同时仍是 uk 在前）——
+        # 下面的断言只看 url 形态与口音取值，不依赖这个顺序。
         vslots = {v["lemma"]: (v.get("audios") or {}) for v in api_all["items"]}
         expect_btn = [
             r for r in rows
@@ -520,11 +554,13 @@ async def main() -> None:  # noqa: C901
 
         # ---------------------------------------------------------- D3 删 AI 记录
         # 划词即翻译，误操作难免 —— 检索页搜到的那条记录也要能就地删掉。
-        # 用「最新一条记录」的正文去搜：脚本刚划过词、解析过句子，这一条必然是
-        # 本次运行产生的，删它不会碰到用户自己的历史。
+        # **只删本轮新产生的**（id 大于起手时那条）：本脚本不调模型，随手删
+        # 「最新一条」删的就是用户自己的历史（见 main 开头 newest_log_at_start）。
         newest = api("/api/ai/logs?limit=1")["items"]
         if not newest:
             check(False, "造一条可删的 AI 记录", "库里一条流水都没有")
+        elif int(newest[0]["id"]) <= newest_log_at_start:
+            print(f"  （最新一条流水 #{newest[0]['id']} 不是本轮产生的，跳过删除断言）", flush=True)
         else:
             head("[D3] 检索页：删掉一条 AI 记录（误操作清理）")
             probe = newest[0]

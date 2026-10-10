@@ -17,10 +17,18 @@ M4 的选择是**全收**，一直没变：
 「在哪篇、哪句里划过」在 `vocab_sources`，一篇一词一条 ——
 这才是「按文章筛生词」和「单篇汇总清单」的依据。
 
-## 音标只从词典来
+## 音标只从词典来，且必须是「原形那份」
 
 `enroll` 的入参是本地词典查出来的词条（ECDICT 释义 + ipa-dict 音标，红线 3），
-调用方是 `api/dictionary.py` 的查词端点。这里原样落库，不做二次加工。
+这里原样落库，不做二次加工 —— 但**哪一份词条**由调用方定：
+
+    api/dictionary.py 传进来的是 `dictionary.lemma_entry(lookup(word))`，
+    即 **lemma 自己**那份（划 `Experts` → 用它查到的 `expert` 条目）。
+
+理由是这一行按 `lemma` 唯一、词头就是 `lemma`（见上一节）：音标与释义必须与
+词头同源。M11 之前传的是**划到的词形**那份（词卡口径），于是 69 条里有 25 条
+长成「expert /ˈɛkspɜːts/、释义（expert的复数形式）」。划到的形态仍然记在
+`surface` 与 `vocab_sources.surface` 里，一个字都没少。
 """
 
 from __future__ import annotations
@@ -154,6 +162,11 @@ def enroll(
 ) -> dict[str, Any]:
     """把一次成功的 dict 调用登记进生词本（幂等）。
 
+    `word` 是用户**划到**的形态（`Experiments`），`result` 是**原形那份**词条
+    （`experiment`，调用方用 `dictionary.lemma_entry` 换过）：前者进 `surface`
+    与 `vocab_sources.surface`（「在哪儿划过什么形态」），后者填这一行的
+    词头/音标/释义。两者混用就会出现词头与音标对不上的行 —— 见模块 docstring。
+
     必须在调用方的写事务里执行 —— 它要和 `ai_logs` 那条流水同生共死：
     日志写进去了而词没入册（或反过来）都会让「痕迹」出现缺口。
     """
@@ -164,9 +177,20 @@ def enroll(
     surface = (word or lemma).strip() or lemma
     now = now_iso()
 
-    # 词典给的音标可能只有 uk 或只有 us，两个都空说明确实没收录
-    ph_uk = result.get("phonetic_uk") or result.get("phonetic")
-    ph_us = result.get("phonetic_us") or result.get("phonetic")
+    # 音标**词典给几条就是几条**：只有一侧就只存一侧。
+    #
+    # 以前这里写成 `ph_uk = ... or result["phonetic"]`，本意是「单侧音标也别丢」，
+    # 实际效果是把那一侧的读音**复制到另一侧** —— `Tuesday` / `pension` /
+    # `arithmetic` 这几条因此在库里凭空多出一条英音（ipa-dict 的英音表里
+    # 根本没有它们）。那是编造，红线 3 的立场是「缺失就不显示」。
+    # M12 起生词本卡会把英美两条并排显示，这种假数据会当场露馅。
+    #
+    # 两侧都空时才用通用 `phonetic` 兜底（老形状的入参才有这个字段），按英式
+    # 落 uk —— 与 `dictionary._phonetics` 第 3 条（ECDICT 单条音标）同一口径。
+    ph_uk = result.get("phonetic_uk")
+    ph_us = result.get("phonetic_us")
+    if not ph_uk and not ph_us:
+        ph_uk = result.get("phonetic")
     worth = 1 if result.get("worth", 1) else 0
 
     row = conn.execute("SELECT id, status, worth FROM vocab WHERE lemma = ?", (lemma,)).fetchone()
@@ -209,18 +233,20 @@ def enroll(
         ).fetchone() is None
         # 两套口径，故意不一样：
         #
-        #   音标系列 —— 用户改不了（只可能来自词典），所以**新值优先**。
-        #     否则第一次查到的坏值会被 COALESCE 永久钉住，后面查对了也修不回来。
-        #     M4 实测踩过这个（preserved 挂上了过去式的读音）。
+        #   音标系列 —— 用户改不了（只可能来自词典），所以**整个替换**，不用
+        #     COALESCE。这一行的词头是 lemma，重划一次拿到的就是同一份原形词条，
+        #     直接赋值天然幂等；而 COALESCE 有两处坏处：第一次查到的坏值会被
+        #     永久钉住（M4 实测：preserved 挂上了过去式的读音），以及词典后来
+        #     确认「没有这一侧」时（值为 NULL）旧值清不掉。
         #   释义/批注 —— 用户能改，所以**旧值优先**，只补空。
         conn.execute(
             "UPDATE vocab SET"
             "  seen_count = seen_count + ?,"
             "  worth = MAX(worth, ?),"
-            "  phonetic_uk = COALESCE(?, phonetic_uk),"
-            "  phonetic_us = COALESCE(?, phonetic_us),"
-            "  phonetic_source = COALESCE(?, phonetic_source),"
-            "  phonetic_of = COALESCE(?, phonetic_of),"
+            "  phonetic_uk = ?,"
+            "  phonetic_us = ?,"
+            "  phonetic_source = ?,"
+            "  phonetic_of = ?,"
             "  pos = COALESCE(pos, ?),"
             "  meaning_cn = COALESCE(meaning_cn, ?),"
             "  meaning_en = COALESCE(meaning_en, ?),"

@@ -15,6 +15,12 @@
     项目立场是「故意没有 `POST /api/vocab`」—— 入册是划词时自动发生的，不是用户
     点出来的。所以只要给了 `article_id`，就在这次查词里顺手把这个词收进生词本
     （幂等）。探针与验收脚本用 `?enroll=0` 关掉它。
+
+入册用的是**原形**那份词条（`dictionary.lemma_entry`），不是这个端点返回的那份：
+    端点给词卡用，口径是**词形优先**（划 `Experts` 给 `/ˈekspɜːts/`，见
+    `services/dictionary.py`）；生词本按 `lemma` 建行、词头就是原形，音标与释义
+    必须一起来自原形，否则会出现词头与音标对不上的行。两边只差一个数据来源，
+    划线记录里的 `surface` 仍是用户真正划到的那个形态。
 """
 
 from __future__ import annotations
@@ -43,12 +49,22 @@ MEDIA_TYPES = {
 
 
 def _enroll(
-    *, article_id: int, highlight_id: int | None, data: dict[str, Any], sentence: str | None
+    *,
+    article_id: int,
+    highlight_id: int | None,
+    surface: str,
+    data: dict[str, Any],
+    sentence: str | None,
 ) -> dict[str, Any] | None:
     """把这次查词收进生词本（幂等）。
 
-    入册在写事务里，而 `dictionary.lookup()` 的只读查询**已经结束**了 ——
-    不把只读查询叠进写事务（历史上踩过「写事务里再开一个事务」的死锁）。
+    `surface` 是用户**划到**的形态（`experts`），`data` 是**原形那份**词条
+    （`expert`，见 `_entry`）。两者必须分开传：`vocab` 拿前者记「在哪儿划到的
+    什么形态」，拿后者填音标与释义。
+
+    入册在写事务里，而 `dictionary.lookup()` / `lemma_entry()` 的只读查询
+    **已经结束**了 —— 不把只读查询叠进写事务（历史上踩过「写事务里再开一个
+    事务」的死锁）。
 
     文章不存在时**只记日志、不报错**：入册是副作用，查词本身该照常返回。
     为此把 404 抛给用户，等于因为「生词本没记上」而把词卡也弄没了。
@@ -62,13 +78,13 @@ def _enroll(
                 conn,
                 article_id=article_id,
                 highlight_id=highlight_id,
-                word=data["word"],
+                word=surface,
                 result=data,
                 sentence=sentence or "",
             )
     except Exception as e:  # noqa: BLE001
         # 入册失败不能把已经查到的词条一起丢掉 —— 词卡是用户要的东西。
-        log.warning("入册失败 %r: %s", data.get("word"), e)
+        log.warning("入册失败 %r: %s", surface, e)
         return None
 
 
@@ -86,7 +102,11 @@ def _entry(
         receipt = _enroll(
             article_id=article_id,
             highlight_id=highlight_id,
-            data=data,
+            # 划到的形态与入库用的词条是两回事：前者进 vocab_sources.surface，
+            # 后者（**原形**那份）填词头/音标/释义。两个 lookup 都是只读，
+            # 都在 _enroll 的写事务之外。
+            surface=data["word"],
+            data=dictionary.lemma_entry(data),
             sentence=sentence,
         )
     return WordEntryOut(**data, enrolled=receipt)

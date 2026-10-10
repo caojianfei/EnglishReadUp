@@ -25,6 +25,21 @@ ECDICT 自带的音标留作**兜底**：它只覆盖 10%，而且混着老式�
 Wiktionary 时代要靠模型给 lemma 才能回查原形音标；现在 ECDICT 的 `exchange`
 字段自带 `0:原形`（`preserved` → `preserve`），本地就能拿到，所以
 「划到变形词 → 音标自动取自原形」这条能力原样保留，且不再依赖模型。
+
+## 词卡按词形，生词本按原形
+
+同一个词条有两个消费者，口径**故意不一样**：
+
+    词卡（`lookup`，即 `/api/dict/{word}`）
+        词形优先 —— 划 `Experts` 给你 `Experts` 的读音 `/ˈɛkspɜːts/`：
+        人在文章里读到的正是这个形式，卡片上词头也就是它。
+    生词本（`lemma_entry`）
+        原形同源 —— 那一行是按 `lemma` 建的（`vocab.lemma` 唯一），词头
+        就是 `expert`，音标与释义必须一起是 `expert` 的。否则会出现
+        「expert /ˈɛkspɜːts/、释义写「（expert的复数形式）」」这种自相矛盾的
+        行（M11 实测：69 条里 25 条是这么来的）。
+
+所以入册前要过一次 `lemma_entry`：只换数据来源，不改查词口径。
 """
 
 from __future__ import annotations
@@ -368,9 +383,35 @@ def lookup(raw_word: str) -> dict[str, Any]:
     }
 
 
+def lemma_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """把词条换成「lemma 自己」的那一份，**给生词本用**（M11）。
+
+    `lookup` 返回的是**词形**的词条（词形优先，见模块 docstring）：划 `Experts`
+    拿到 `/ˈekspɜːts/` 与 ECDICT `experts` 条的释义。而 `vocab` 那一行是按
+    `lemma` 建的，词头就是 `expert` —— 直接把词形数据挂上去，列表上就会出现
+    「expert /ˈɛkspɜːts/、释义写（expert的复数形式）」这种词头与数据对不上的行。
+
+    所以入册前换成原形那份：`word` / `headword` / `lemma` / 音标 / 释义 / 词性 /
+    worth / tags 全部来自 `lookup(lemma)`。查词端点（词卡）不受影响。
+
+    原形查不到（极少数 `exchange` 指向的词条本身缺失）就原样返回 —— 宁可这一行
+    数据糙一点，也不能把用户划过的词弄丢。
+
+    **只读**：调用方负责保证它在写事务之外执行（它内部会开只读连接，
+    `audio.slots()` 还要读主库，叠进 `tx()` 就是历史上踩过的死锁）。
+    """
+    word = normalize_word(str(entry.get("word") or ""))
+    lemma = normalize_word(str(entry.get("lemma") or ""))
+    if not lemma or lemma == word:
+        return entry
+    base = lookup(lemma)
+    return base if base.get("source") == "ecdict" else entry
+
+
 __all__ = [
     "audio_candidates",
     "audio_fallback",
+    "lemma_entry",
     "lookup",
     "normalize_word",
     "primary_phonetic",

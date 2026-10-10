@@ -21,19 +21,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
-import { phoneticNote, displayPhonetic } from '../lib/phonetic'
+import { phoneticNote } from '../lib/phonetic'
 import type { DictSetup, SelectionInfo, WordEntry } from '../lib/types'
-import { AudioButton } from './AudioButton'
+import AccentPhonetics from './AccentPhonetics'
 
 const WIDTH = 380
 const GAP = 8
 const MARGIN = 8
-
-/** 音标来源的显示名。两个来源写法不同（一个是现代 IPA，一个是老式英标）。 */
-const SOURCE_LABEL: Record<string, string> = {
-  ipa: 'ipa-dict',
-  ecdict: 'ECDICT',
-}
 
 export interface SelectionPopoverProps {
   info: SelectionInfo
@@ -75,120 +69,6 @@ function SetupNote({ setup }: { setup?: DictSetup | null }) {
     return <>自动下载被关掉了（DICT_AUTODOWNLOAD=false）：在 backend/ 下跑一次 {script}。</>
   }
   return <>在 backend/ 下跑一次 {script} 即可。</>
-}
-
-/**
- * 音标行：英、美各一栏，**喇叭跟在自己那条音标后面**。
- *
- * 为什么这样排：两个喇叭并排放在末尾时，用户得先数一下「左边那个是英还是美」；
- * 贴在自己那条音标边上就没有这个问题。缺哪边就只显示哪边 —— ipa-dict 对
- * 专名（`Beijing`）常常只有美音，硬凑一条出来是编造。
- *
- * 数据出处见 `services/dictionary.py::_phonetics` 的优先级。
- */
-function PhoneticRow({
-  entry,
-  pending,
-  word,
-}: {
-  entry: WordEntry | null
-  pending: boolean
-  word: string
-}) {
-  const uk = entry?.phonetic_uk ?? null
-  const us = entry?.phonetic_us ?? null
-  const audios = entry?.audios ?? {}
-  const head = entry?.headword || word
-  const source = entry?.phonetic_source ?? 'missing'
-
-  const speaker = (accent: 'uk' | 'us') => {
-    const s = audios[accent]
-    return (
-      <AudioButton
-        src={s?.url ?? null}
-        word={head}
-        accent={accent}
-        origin={s?.origin ?? null}
-        status={s?.status ?? null}
-      />
-    )
-  }
-
-  if (!uk && !us) {
-    // 刻意不挂 `data-testid="phonetic-line"`：那个 testid 的语义是「有音标」，
-    // 验收脚本靠它等音标出现，没音标也渲染的话断言会拿到一个空节点。
-    return (
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-xs" data-testid="phonetic-missing" style={{ color: 'var(--ink-faint)' }}>
-          {pending ? '音标查询中…' : '词典未收录音标'}
-        </span>
-        {/* 音标没有 ≠ 没录音：有道那边的录音不依赖词条收没收 */}
-        {speaker('uk')}
-        {speaker('us')}
-      </div>
-    )
-  }
-
-  // 两个数据源对同一个词的标注**常常完全相同**（`ancestry` 的英美音标一字不差）。
-  // 那种情况下并排两条一模一样的是噪声 —— 只显示一条，但两个喇叭都留着：
-  // 音标相同不代表录音相同，英音美音是两份不同的音频。
-  const same = !!uk && !!us && uk === us
-
-  return (
-    <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1"
-      data-testid="phonetic-line"
-      // `data-phonetic` 保留词典原文（归一化只作用于显示），验收脚本拿它逐字比对；
-      // 英美两条各自也有锚点，供脚本分别断言。
-      data-phonetic={entry?.phonetic ?? us ?? uk}
-      data-phonetic-uk={uk ?? ''}
-      data-phonetic-us={us ?? ''}
-      data-source={source}
-    >
-      {same ? (
-        <span className="flex items-center gap-1">
-          <span className="font-serif text-[15px]" style={{ color: 'var(--ink-soft)' }}>
-            {displayPhonetic(us)}
-          </span>
-          {speaker('uk')}
-          {speaker('us')}
-        </span>
-      ) : (
-        <>
-          {us ? (
-            <span className="flex items-center gap-1">
-              <span className="text-[0.7em] uppercase" style={{ color: 'var(--ink-faint)' }}>
-                美
-              </span>
-              <span className="font-serif text-[15px]" style={{ color: 'var(--ink-soft)' }}>
-                {displayPhonetic(us)}
-              </span>
-              {speaker('us')}
-            </span>
-          ) : null}
-          {uk ? (
-            <span className="flex items-center gap-1">
-              <span className="text-[0.7em] uppercase" style={{ color: 'var(--ink-faint)' }}>
-                英
-              </span>
-              <span className="font-serif text-[15px]" style={{ color: 'var(--ink-soft)' }}>
-                {displayPhonetic(uk)}
-              </span>
-              {speaker('uk')}
-            </span>
-          ) : null}
-          {/* 音标缺了哪一边，喇叭照样给：**录音的有无与音标的有无是两件事** ——
-              ipa-dict 对专名常常只收美音（Thailand、Beijing），而有道那边
-              英音美音都有。把喇叭跟音标绑死等于白丢一个能播的音。 */}
-          {!us ? speaker('us') : null}
-          {!uk ? speaker('uk') : null}
-        </>
-      )}
-      <span className="text-[10px]" style={{ color: 'var(--ink-faint)' }} data-testid="phonetic-source-note">
-        音标来自词典（{SOURCE_LABEL[source] ?? source}）
-      </span>
-    </div>
-  )
 }
 
 export default function SelectionPopover({
@@ -337,7 +217,16 @@ export default function SelectionPopover({
           <>
             {/* 词形态：本地词典查出来的东西，毫秒级，所以没有「音标先出、释义后到」的问题 */}
             <div className="mb-2">
-              <PhoneticRow entry={entry} pending={loading} word={info.surface} />
+              <AccentPhonetics
+                uk={entry?.phonetic_uk}
+                us={entry?.phonetic_us}
+                audios={entry?.audios}
+                word={entry?.headword || info.surface}
+                className="text-[15px]"
+                phoneticStyle={{ color: 'var(--ink-soft)' }}
+                emptyText={loading ? '音标查询中…' : '词典未收录音标'}
+                source={entry?.phonetic_source ?? 'missing'}
+              />
             </div>
 
             {error ? (

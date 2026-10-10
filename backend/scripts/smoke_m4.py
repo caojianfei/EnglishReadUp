@@ -258,16 +258,15 @@ def main() -> None:  # noqa: C901
                           "新痕迹已挂到出现记录上")
 
     # ------------------------------------------------------------ C 音标口径
-    head("[C] 生词本音标的口径（红线 3）")
+    head("[C] 音标的口径（红线 3）：词卡按词形、生词本按原形")
     if dict_resp:
         # M10 起 `/api/dict/{word}` 返回的就是完整词条（字段在顶层，
         # 不再包一层 `result`），音标来自本地 ipa-dict / ECDICT。
         #
-        # 音标口径也变了：**词形优先、原形兜底**。ipa-dict 收屈折形式
+        # 词卡（这个端点）是**词形优先、原形兜底**。ipa-dict 收屈折形式
         # （ran / runs / running 各自成条），划到 `visitors` 拿到的就是它自己的
         # 读音 —— 人在文章里读的正是这个形式。只有词形没收录时才回退到原形，
-        # 那时才记 `phonetic_of`。所以比对锚点是 `phonetic_of or word`，
-        # 不是旧口径里的 `lemma`。
+        # 那时才记 `phonetic_of`。所以比对锚点是 `phonetic_of or word`。
         res = dict_resp
         lemma = res["lemma"]
         surface = word
@@ -282,8 +281,19 @@ def main() -> None:  # noqa: C901
         row = next(
             x for x in c.get(f"/api/vocab?q={lemma}&limit=5").json()["items"] if x["lemma"] == lemma
         )
-        check(row["phonetic"] == res["phonetic"], "生词本存的音标与查词结果一致",
-              f"{row['phonetic']!r}")
+        # 生词本那一行按 **lemma** 建（vocab.lemma 唯一、词头就是 lemma），所以
+        # 它存/显示的音标必须是**原形**的。M11 之前这里存的是划到的词形那份，
+        # 于是列表上出现「expert /ˈɛkspɜːts/」这种词头与音标对不上的行。
+        origin = c.get(f"/api/dict/{lemma}").json()
+        if origin.get("source") == "ecdict":
+            check(row["phonetic"] == origin["phonetic"], "生词本按原形存音标（词头与音标同源）",
+                  f"{row['phonetic']!r} vs 原形 {origin['phonetic']!r}")
+            if res["word"].lower() != lemma.lower() and res["phonetic"] != origin["phonetic"]:
+                check(row["phonetic"] != res["phonetic"],
+                      "变形词入册后不再挂着词形的音标",
+                      f"{surface}: 词形 {res['phonetic']!r} → 生词本 {row['phonetic']!r}")
+        else:
+            print(f"  （原形 {lemma} 在词典里查不到，跳过生词本音标的比对）")
         check(row["phonetic_source"] in ("ipa", "ecdict", "missing", None),
               "音标来源可追溯", str(row["phonetic_source"]))
         # 生词本列表要画两个喇叭（M10）

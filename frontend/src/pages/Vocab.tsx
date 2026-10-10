@@ -14,10 +14,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 
+import AccentPhonetics from '../components/AccentPhonetics'
 import AppNav from '../components/AppNav'
-import { AudioButton } from '../components/AudioButton'
 import { api, downloadExport, vocabExportUrl } from '../lib/api'
-import { displayPhonetic, phoneticNote } from '../lib/phonetic'
+import { phoneticNote } from '../lib/phonetic'
 import type { Vocab, VocabStatus } from '../lib/types'
 import { VOCAB_STATUS_LABEL } from '../lib/types'
 
@@ -71,34 +71,19 @@ function WordRow({ v, articleId }: { v: Vocab; articleId: number | null }) {
         <span className="text-base font-semibold" data-testid="vocab-lemma">
           {v.lemma}
         </span>
-        {v.phonetic ? (
-          <span className="font-serif text-sm" style={{ color: 'var(--link)' }} data-testid="vocab-phonetic">
-            {/* 一行放两条音标太挤（词卡上才是英美并排），所以这里只显示主音标 ——
-                标出它是哪个口音的，免得用户点另一个喇叭时觉得对不上 */}
-            <span className="mr-1 text-[0.7em] uppercase" style={{ color: 'var(--ink-faint)' }}>
-              {v.phonetic_us ? '美' : '英'}
-            </span>
-            {displayPhonetic(v.phonetic)}
-          </span>
-        ) : (
-          <span className="er-muted text-xs">无音标</span>
-        )}
-        {/* 英美各一个喇叭：点哪个下哪个（音频不预热，首次点要等几秒） */}
-        {(['uk', 'us'] as const).map((accent) => {
-          const slot = v.audios?.[accent]
-          if (!slot) return null
-          return (
-            <AudioButton
-              key={accent}
-              src={slot.url}
-              word={v.lemma}
-              accent={accent}
-              origin={slot.origin}
-              status={slot.status}
-              compact
-            />
-          )
-        })}
+        {/* 英美两条都摆出来（M12 之前只显示主音标）：点「英」那个喇叭听到的读音，
+            在卡上得能找到对应的一条音标。缺哪边只显示哪边 —— 见 AccentPhonetics。 */}
+        <AccentPhonetics
+          uk={v.phonetic_uk}
+          us={v.phonetic_us}
+          audios={v.audios}
+          word={v.lemma}
+          compact
+          className="text-sm"
+          phoneticStyle={{ color: 'var(--link)' }}
+          emptyText="无音标"
+          testId="vocab-phonetic"
+        />
         {v.pos ? <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>{v.pos}</span> : null}
         {phoneticNote(v.lemma, v.phonetic_of) ? (
           <span className="er-muted text-[11px]">{phoneticNote(v.lemma, v.phonetic_of)}</span>

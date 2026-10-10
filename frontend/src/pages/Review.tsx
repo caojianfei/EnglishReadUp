@@ -19,10 +19,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
+import AccentPhonetics from '../components/AccentPhonetics'
 import AppNav from '../components/AppNav'
-import { AudioButton } from '../components/AudioButton'
 import { api, errorText } from '../lib/api'
-import { displayPhonetic, phoneticNote } from '../lib/phonetic'
+import { phoneticNote } from '../lib/phonetic'
 import type { ReviewCard, SrsGrade } from '../lib/types'
 import { SRS_GRADES, SRS_GRADE_KEY, SRS_GRADE_LABEL } from '../lib/types'
 
@@ -352,33 +352,26 @@ export default function ReviewPage() {
               >
                 {card.lemma}
               </p>
-              <div className="mt-2 flex items-center justify-center gap-2 text-sm">
-                {card.phonetic ? (
-                  <span style={{ color: 'var(--ink-soft)' }}>
-                    {displayPhonetic(card.phonetic)}
-                    {card.pos ? ` · ${card.pos}` : ''}
-                  </span>
-                ) : card.pos ? (
-                  <span style={{ color: 'var(--ink-faint)' }}>{card.pos}</span>
-                ) : null}
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-sm">
                 {/* 正面给发音是正确的：卡正面本来就摆着音标，听一遍不泄露释义。
                     复习时最需要听音，这里缺喇叭才是真的怪。
-                    英美各一个（音频不预热，点哪个才下哪个）。 */}
-                {(['uk', 'us'] as const).map((accent) => {
-                  const slot = card.audios?.[accent]
-                  if (!slot) return null
-                  return (
-                    <AudioButton
-                      key={accent}
-                      src={slot.url}
-                      word={card.lemma}
-                      accent={accent}
-                      origin={slot.origin}
-                      status={slot.status}
-                      compact
-                    />
-                  )
-                })}
+                    英美各一个（音频不预热，点哪个才下哪个）；M12 起两条音标
+                    并排显示，点哪个喇叭就能看哪个的读音。 */}
+                <AccentPhonetics
+                  uk={card.phonetic_uk}
+                  us={card.phonetic_us}
+                  audios={card.audios}
+                  word={card.lemma}
+                  compact
+                  className="text-sm"
+                  phoneticStyle={{ color: 'var(--ink-soft)' }}
+                  emptyText=""
+                />
+                {card.pos ? (
+                  <span style={{ color: card.phonetic ? 'var(--ink-soft)' : 'var(--ink-faint)' }}>
+                    {card.pos}
+                  </span>
+                ) : null}
               </div>
               {phoneticNote(card.lemma, card.phonetic_of) ? (
                 <p className="er-muted mt-1 text-[11px]">
