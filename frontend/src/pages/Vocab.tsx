@@ -16,7 +16,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 
 import AccentPhonetics from '../components/AccentPhonetics'
 import AppNav from '../components/AppNav'
-import { api, downloadExport, vocabExportUrl } from '../lib/api'
+import { api, downloadExport, dropDictCache, vocabExportUrl } from '../lib/api'
 import { phoneticNote } from '../lib/phonetic'
 import type { Vocab, VocabStatus } from '../lib/types'
 import { VOCAB_STATUS_LABEL } from '../lib/types'
@@ -43,7 +43,9 @@ function WordRow({ v, articleId }: { v: Vocab; articleId: number | null }) {
   const patch = useMutation({
     mutationFn: (payload: { status?: string; meaning_cn?: string; worth?: number }) =>
       api.patchVocab(v.id, payload),
-    onSuccess: () => {
+    onSuccess: (_data, payload) => {
+      // 改释义是全局修正（词卡里也生效），断网兜底的查词缓存得一起清掉
+      if (payload.meaning_cn !== undefined) dropDictCache(v.lemma)
       void qc.invalidateQueries({ queryKey: ['vocab'] })
       void qc.invalidateQueries({ queryKey: ['vocab-stats'] })
       setEditing(false)
@@ -116,6 +118,11 @@ function WordRow({ v, articleId }: { v: Vocab; articleId: number | null }) {
       ) : (
         <p className="mt-1.5 text-sm" data-testid="vocab-meaning">
           {v.meaning_cn || '（无释义）'}
+          {v.meaning_edited ? (
+            <span className="er-muted ml-1.5 text-[11px]" data-testid="vocab-meaning-edited">
+              （已修正）
+            </span>
+          ) : null}
         </p>
       )}
 
@@ -155,6 +162,17 @@ function WordRow({ v, articleId }: { v: Vocab; articleId: number | null }) {
         >
           改释义
         </button>
+        {/* 清空释义 = 删掉修正、退回词典原文（后端 update_vocab） */}
+        {v.meaning_edited ? (
+          <button
+            className="er-btn !px-2 !py-1 !text-[11px]"
+            title="删掉你的修正，退回离线词典的原文（词卡里也一起恢复）"
+            data-testid="vocab-meaning-reset"
+            onClick={() => patch.mutate({ meaning_cn: '' })}
+          >
+            恢复词典
+          </button>
+        ) : null}
         <button
           className="er-btn !px-2 !py-1 !text-[11px]"
           title="切换「值得记」标记，只影响排序与筛选，不会删掉这个词"

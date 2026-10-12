@@ -1226,6 +1226,7 @@ export default function Reader({
             else closePopover()
           }}
           onClose={closePopover}
+          onEntryChange={setEntry}
         />
       ) : null}
 

@@ -238,7 +238,9 @@ class WordEntryOut(BaseModel):
     phonetic_of: str | None = Field(
         default=None, description="音标取自哪个原形（划 invading 时是 invade）"
     )
-    meaning_cn: str = ""
+    meaning_cn: str = Field(default="", description="中文释义：有用户修正时就是修正值")
+    meaning_cn_dict: str = Field(default="", description="词典原文（不受用户修正影响）")
+    meaning_edited: bool = Field(default=False, description="中文释义是否用了用户修正")
     meaning_en: str = ""
     worth: int = Field(default=1, description="模型判定已下线，现按考纲标签/词频本地推导")
     tags: str = Field(default="", description="ECDICT 的考纲标签原样（zk gk cet4 …）")
@@ -253,6 +255,13 @@ class WordEntryOut(BaseModel):
     enrolled: dict[str, Any] | None = Field(
         default=None, description="本次是否把这个词收进了生词本"
     )
+
+
+class MeaningOverrideIn(BaseModel):
+    """`PUT /api/dict/override`：修正一个词条的中文释义（词放在 body 里，带斜杠也不怕）。"""
+
+    word: str = Field(min_length=1, max_length=120)
+    meaning_cn: str = Field(min_length=1, max_length=500)
 
 
 # ---------------------------------------------------------------- AI（M3）
@@ -338,6 +347,7 @@ class VocabOut(BaseModel):
     )
     pos: str | None = None
     meaning_cn: str | None = None
+    meaning_edited: bool = Field(default=False, description="释义是否用了用户修正（dict_overrides）")
     meaning_en: str | None = None
     meaning_in_ctx: str | None = None
     example: str | None = None
@@ -375,7 +385,9 @@ class VocabOut(BaseModel):
 class VocabPatch(BaseModel):
     status: str | None = Field(default=None, description="new | learning | known")
     note: str | None = Field(default=None, max_length=2000)
-    meaning_cn: str | None = Field(default=None, max_length=500)
+    meaning_cn: str | None = Field(
+        default=None, max_length=500, description="写入全局修正；空串 = 恢复词典原文"
+    )
     worth: int | None = Field(default=None, description="1 值得记 / 0 不必记")
 
 

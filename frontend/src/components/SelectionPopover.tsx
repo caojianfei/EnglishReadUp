@@ -16,11 +16,17 @@
  * M10 起词卡的数据全部来自**本地词典库**（ECDICT 释义 + ipa-dict 英美音标），
  * 不再调模型 —— 所以卡片上没有「在这句里的意思」「例句」「搭配」这些
  * 只有模型才给得出的栏目，也没有模型名与耗时。
+ *
+ * 离线词典偶尔有释义不对的词条：中文释义旁的【纠错】可以就地改掉。修正存在
+ * 后端（`dict_overrides`），叠在词典之上 —— 再查这个词、生词本、复习卡都用
+ * 修正值；【恢复词典释义】随时退回原文。
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 
+import { api, dropDictCache, errorText } from '../lib/api'
 import { phoneticNote } from '../lib/phonetic'
 import type { DictSetup, SelectionInfo, WordEntry } from '../lib/types'
 import AccentPhonetics from './AccentPhonetics'
@@ -48,6 +54,8 @@ export interface SelectionPopoverProps {
   onAction: (action: 'explain') => void
   onDelete: () => void
   onClose: () => void
+  /** 释义修正 / 恢复之后，把后端返回的新词条交回去（Reader 用它替换当前词卡） */
+  onEntryChange?: (entry: WordEntry) => void
 }
 
 /**
@@ -81,11 +89,50 @@ export default function SelectionPopover({
   onAction,
   onDelete,
   onClose,
+  onEntryChange,
 }: SelectionPopoverProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [placeAbove, setPlaceAbove] = useState(false)
   const [left, setLeft] = useState(0)
   const [ready, setReady] = useState(false)
+  const qc = useQueryClient()
+
+  // ---- 释义纠错
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [fixErr, setFixErr] = useState<string | null>(null)
+
+  // 换了一个词就退出编辑，别把上一个词的草稿带过来
+  useEffect(() => {
+    setEditing(false)
+    setFixErr(null)
+  }, [entry?.word])
+
+  const commitMeaning = async (next: string | null) => {
+    if (!entry) return
+    if (next !== null && !next.trim()) {
+      setFixErr('释义不能为空；想退回词典原文请点「恢复词典释义」')
+      return
+    }
+    setSaving(true)
+    setFixErr(null)
+    try {
+      const fresh =
+        next === null ? await api.resetMeaning(entry.word) : await api.setMeaning(entry.word, next)
+      dropDictCache(info.surface)
+      dropDictCache(entry.word)
+      // 生词本里同一个词也被后端一起改了
+      void qc.invalidateQueries({ queryKey: ['vocab'] })
+      // 新词条里没有入册回执（纠错接口不入册），沿用这次划词时的
+      onEntryChange?.({ ...fresh, enrolled: entry.enrolled })
+      setEditing(false)
+    } catch (e) {
+      setFixErr(errorText(e))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   // 先渲染一帧量高度，再决定放上方还是下方 —— 否则会先闪一下再跳位
   useLayoutEffect(() => {
@@ -99,7 +146,7 @@ export default function SelectionPopover({
     const max = window.innerWidth - WIDTH - MARGIN
     setLeft(Math.max(MARGIN, Math.min(center - WIDTH / 2, max)))
     setReady(true)
-  }, [rect, entry, loading, error])
+  }, [rect, entry, loading, error, editing])
 
   // 点空白处 / Esc 关闭。mousedown 而非 click：避免与选区拖拽冲突。
   useEffect(() => {
@@ -292,9 +339,76 @@ export default function SelectionPopover({
                   ) : null}
                   {entry.worth ? <span className="er-chip">重点</span> : null}
                 </div>
-                <p className="text-sm font-medium" data-testid="dict-meaning">
-                  {entry.meaning_cn || '（词典里没有中文释义）'}
-                </p>
+                {editing ? (
+                  <div className="space-y-1.5" data-testid="meaning-editor">
+                    <textarea
+                      className="er-input !py-1.5 !text-sm"
+                      rows={3}
+                      value={draft}
+                      autoFocus
+                      disabled={saving}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Esc 只退出编辑，不能冒泡到「Esc 关浮层」的全局监听
+                        if (e.key === 'Escape') {
+                          e.stopPropagation()
+                          setEditing(false)
+                        }
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          void commitMeaning(draft)
+                        }
+                      }}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        className="er-btn er-btn-primary !px-2.5 !py-1 !text-xs"
+                        disabled={saving}
+                        data-testid="meaning-save"
+                        onClick={() => void commitMeaning(draft)}
+                      >
+                        保存
+                      </button>
+                      <button
+                        type="button"
+                        className="er-btn !px-2.5 !py-1 !text-xs"
+                        disabled={saving}
+                        onClick={() => setEditing(false)}
+                      >
+                        取消
+                      </button>
+                      <span className="text-[10px]" style={{ color: 'var(--ink-faint)' }}>
+                        Enter 保存 · Shift+Enter 换行
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-2">
+                    <p className="min-w-0 flex-1 text-sm font-medium" data-testid="dict-meaning">
+                      {entry.meaning_cn || '（词典里没有中文释义）'}
+                    </p>
+                    <button
+                      type="button"
+                      className="shrink-0 text-[11px] transition-opacity hover:opacity-60"
+                      style={{ color: 'var(--link)' }}
+                      title="词典释义不对？改成你认为正确的（之后查这个词、生词本都会用你的版本）"
+                      data-testid="meaning-fix"
+                      onClick={() => {
+                        setDraft(entry.meaning_cn)
+                        setFixErr(null)
+                        setEditing(true)
+                      }}
+                    >
+                      纠错
+                    </button>
+                  </div>
+                )}
+                {fixErr ? (
+                  <p className="text-xs" style={{ color: 'var(--ink-soft)' }}>
+                    {fixErr}
+                  </p>
+                ) : null}
                 {entry.meaning_en ? (
                   <p className="text-xs leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
                     {entry.meaning_en}
@@ -302,6 +416,28 @@ export default function SelectionPopover({
                 ) : null}
                 <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[10px]" style={{ color: 'var(--ink-faint)' }}>
                   <span>ECDICT</span>
+                  {/* 修正过的释义要能看出来，并且随时能退回词典原文 */}
+                  {entry.meaning_edited ? (
+                    <>
+                      <span>·</span>
+                      <span
+                        title={`词典原文：${entry.meaning_cn_dict || '（空）'}`}
+                        data-testid="meaning-edited"
+                      >
+                        释义已修正
+                      </span>
+                      <button
+                        type="button"
+                        className="hover:underline"
+                        style={{ color: 'var(--link)' }}
+                        disabled={saving}
+                        data-testid="meaning-reset"
+                        onClick={() => void commitMeaning(null)}
+                      >
+                        恢复词典释义
+                      </button>
+                    </>
+                  ) : null}
                   {entry.tags ? (
                     <>
                       <span>·</span>

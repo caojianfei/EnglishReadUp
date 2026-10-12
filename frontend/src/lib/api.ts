@@ -165,6 +165,30 @@ async function sendJSON<T>(url: string, method: string, body?: unknown): Promise
   return (await res.json()) as T
 }
 
+/**
+ * 清掉某个词的查词缓存（释义修正 / 恢复之后调用）。
+ *
+ * `cachedGet` 把每次查词结果都留了一份，断网时拿它兜底 —— 不清的话，
+ * 断网再划这个词还会弹出修正前的释义。两种入口（路径式 / `?word=`）都要清，
+ * 带不带 `article_id` 等参数的变体也都算。
+ */
+export function dropDictCache(word: string): void {
+  const markers = [`/api/dict/${encodeURIComponent(word)}`, `/api/dict?word=${encodeURIComponent(word)}`]
+  try {
+    const keys = Object.keys(localStorage).filter((k) => {
+      if (!k.startsWith(CACHE_PREFIX)) return false
+      const url = k.slice(CACHE_PREFIX.length).toLowerCase()
+      return markers.some((m) => {
+        const mk = m.toLowerCase()
+        return url === mk || url.startsWith(`${mk}?`) || url.startsWith(`${mk}&`)
+      })
+    })
+    keys.forEach((k) => localStorage.removeItem(k))
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---------------------------------------------------------------- 接口
 
 export const api = {
@@ -222,6 +246,17 @@ export const api = {
       ? cachedGet<WordEntry>(`/api/dict?word=${encodeURIComponent(word)}${tail ? `&${tail}` : ''}`)
       : cachedGet<WordEntry>(`/api/dict/${encodeURIComponent(word)}${tail ? `?${tail}` : ''}`)
   },
+
+  /**
+   * 纠正一个词条的中文释义。词典原文不动，修正叠在上面；生词本里同一个词一起改。
+   * 词放在 body 里，带斜杠（`and/or`）也不用换入口。
+   */
+  setMeaning: (word: string, meaningCn: string) =>
+    sendJSON<WordEntry>('/api/dict/override', 'PUT', { word, meaning_cn: meaningCn }),
+
+  /** 删掉修正 = 恢复词典原文（生词本那一行一起恢复）。 */
+  resetMeaning: (word: string) =>
+    sendJSON<WordEntry>(`/api/dict/override?word=${encodeURIComponent(word)}`, 'DELETE'),
 
   // -------------------------------------------------------------- M3 痕迹
 

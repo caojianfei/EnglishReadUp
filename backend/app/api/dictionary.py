@@ -3,8 +3,10 @@
     GET /api/dict/{word}          一次拿全词条（英美音标 + 词性 + 中/英释义 + 发音槽）
     GET /api/dict?word=...        等价入口。词里带斜杠（`and/or`）时用这个，避免路径分隔冲突
     GET /api/dict/{word}/audio    音频字节流，`?accent=uk|us`
+    PUT /api/dict/override        修正一个词条的中文释义（同步生词本）
+    DELETE /api/dict/override     删掉修正 = 恢复词典原文，`?word=`
 
-三个端点**都不碰 LLM**（红线 3）：音标与释义来自本地词典库，音频由后端本地化后吐流。
+这些端点**都不碰 LLM**（红线 3）：音标与释义来自本地词典库，音频由后端本地化后吐流。
 
 为什么把音标与释义合成一个端点：
     以前是「`GET` 拿音标 + `POST /api/ai/dict` 拿释义」并行两个请求。释义本地化
@@ -32,8 +34,8 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from ..db import tx
-from ..schemas import WordEntryOut
-from ..services import audio as audio_service, dictionary, ecdict, ingest, vocab
+from ..schemas import MeaningOverrideIn, WordEntryOut
+from ..services import audio as audio_service, dictionary, ecdict, ingest, overrides, vocab
 
 log = logging.getLogger("english.api.dict")
 
@@ -147,6 +149,35 @@ def lookup_via_query(
         sentence=sentence,
         enroll=enroll,
     )
+
+
+def _known(word: str) -> dict[str, Any]:
+    """纠错只针对词典里**有**的词条：未收录的词不给补（只改释义，不造词条）。"""
+    data = dictionary.lookup(word)
+    if data["source"] != "ecdict":
+        raise HTTPException(status_code=404, detail="词典未收录这个词，无法纠错")
+    return data
+
+
+@router.put("/override", response_model=WordEntryOut)
+def put_override(payload: MeaningOverrideIn) -> WordEntryOut:
+    """修正中文释义。词典原文不动，修正叠在上面；生词本里同一个词一起改。"""
+    data = _known(payload.word)
+    if not payload.meaning_cn.strip():
+        raise HTTPException(status_code=422, detail="修正后的释义不能为空")
+    # 只读查询已经结束，再开写事务（不把只读查询叠进 tx()）
+    with tx() as conn:
+        overrides.apply(conn, data["word"], payload.meaning_cn)
+    return WordEntryOut(**dictionary.lookup(data["word"]))
+
+
+@router.delete("/override", response_model=WordEntryOut)
+def delete_override(word: str = Query(..., min_length=1, max_length=120)) -> WordEntryOut:
+    """恢复词典原文：删掉修正，生词本里同一个词也恢复成词典释义。"""
+    data = _known(word)
+    with tx() as conn:
+        overrides.clear(conn, data["word"], data["meaning_cn_dict"])
+    return WordEntryOut(**dictionary.lookup(data["word"]))
 
 
 @router.get("/{word}/audio", include_in_schema=False)

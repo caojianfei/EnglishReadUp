@@ -167,6 +167,18 @@ CREATE INDEX IF NOT EXISTS idx_vocab_article ON vocab(article_id);
 -- 生词本列表默认按「值得记 → 划过次数 → id」排（services/vocab.py 的 _ORDERS），走这条。
 CREATE INDEX IF NOT EXISTS idx_vocab_status ON vocab(status, worth DESC, id DESC);
 
+-- 词典释义的用户修正（只改中文释义）。ECDICT 库只读，修正叠在它上面：
+-- 查词（services/dictionary.py::lookup）命中这里就用修正值，生词本里同 lemma 的
+-- 那一行由 services/overrides.py 同步改写。删掉这一行 = 恢复词典原文。
+--
+-- `word` 与 lookup 返回的 `word` 同口径（normalize_word 之后的词形）：
+-- 词卡里改 `experts` 只影响 `experts`；生词本按 lemma 改的是 `expert`。
+CREATE TABLE IF NOT EXISTS dict_overrides (
+  word          TEXT PRIMARY KEY,
+  meaning_cn    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
 -- 生词的出现记录：一个词在一篇文章里被划过一次算一条。
 -- 与 vocab 分表的原因见上：vocab 存「这个词是什么」，这里存「它在哪儿出现过」。
 -- 文章被删时本表跟着删（CASCADE），vocab 行本身保留（article_id 置 NULL）——

@@ -52,7 +52,8 @@ from urllib.parse import quote
 import httpx
 
 from ..config import settings
-from . import audio, dictdata, ecdict, ipa
+from ..db import read
+from . import audio, dictdata, ecdict, ipa, overrides
 from .ecdict import normalize_word
 
 log = logging.getLogger("english.dict")
@@ -324,6 +325,8 @@ def _blank(word: str, *, source: str, setup: dict[str, Any] | None = None) -> di
         "phonetic_source": "missing",
         "phonetic_of": None,
         "meaning_cn": "",
+        "meaning_cn_dict": "",
+        "meaning_edited": False,
         "meaning_en": "",
         "worth": 1,
         "tags": "",
@@ -340,7 +343,11 @@ def lookup(raw_word: str) -> dict[str, Any]:
 
         {word, headword, lemma, pos,
          phonetic, phonetic_uk, phonetic_us, phonetic_source, phonetic_of,
-         meaning_cn, meaning_en, worth, tags, audios, source}
+         meaning_cn, meaning_cn_dict, meaning_edited,
+         meaning_en, worth, tags, audios, source}
+
+    `meaning_cn` 已叠加用户修正（`dict_overrides`，见 services/overrides.py）；
+    `meaning_cn_dict` 永远是词典原文，`meaning_edited` 标记两者是否不同来源。
 
     `source`：`ecdict` 查到 / `missing` 未收录 / `unavailable` 词典库没装
     （后者会带 `setup`：自动补齐的进度，见 services/dictdata.py）。
@@ -363,6 +370,9 @@ def lookup(raw_word: str) -> dict[str, Any]:
         return _blank(word, source="missing")
 
     uk, us, ph_source, ph_of = _phonetics(word, entry)
+    meaning_dict = str(entry.get("meaning_cn") or "")
+    with read() as conn:
+        fixed = overrides.get(conn, word)
     return {
         "word": word,
         # ECDICT 里的真实拼写（`beijing` 查到的是 `Beijing`），词卡上显示它更体面
@@ -374,7 +384,9 @@ def lookup(raw_word: str) -> dict[str, Any]:
         "phonetic_us": us,
         "phonetic_source": ph_source,
         "phonetic_of": ph_of,
-        "meaning_cn": str(entry.get("meaning_cn") or ""),
+        "meaning_cn": fixed if fixed is not None else meaning_dict,
+        "meaning_cn_dict": meaning_dict,
+        "meaning_edited": fixed is not None,
         "meaning_en": str(entry.get("meaning_en") or ""),
         "worth": int(entry.get("worth") or 0),
         "tags": str(entry.get("tags") or ""),

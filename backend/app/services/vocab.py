@@ -38,7 +38,7 @@ import sqlite3
 from typing import Any
 
 from ..db import now_iso, read, tx
-from . import audio, dictionary
+from . import audio, dictionary, overrides
 
 log = logging.getLogger("english.vocab")
 
@@ -55,7 +55,9 @@ SELECT_COLS = (
     " v.note, v.status, v.worth, v.seen_count, v.srs_due,"
     " v.srs_state, v.srs_step, v.srs_interval, v.srs_ease, v.srs_reps,"
     " v.srs_lapses, v.srs_last_at, v.srs_suspended,"
-    " v.created_at, v.updated_at"
+    " v.created_at, v.updated_at,"
+    # 释义是否是用户修正过的（services/overrides.py）。lemma 保留词典大小写，键是小写
+    " EXISTS(SELECT 1 FROM dict_overrides o WHERE o.word = lower(v.lemma)) AS meaning_edited"
 )
 
 # 列表卡片要展示「当时划到的那句」。第一个 `?` 是「优先哪篇文章」：
@@ -102,6 +104,7 @@ def _row(row: sqlite3.Row | None) -> dict | None:
     # SQLite 没有布尔类型，`srs_suspended` 取出来是 0/1；给前端一个真布尔，
     # 免得 `if (v.srs_suspended)` 这种写法在 TS 里被当成 number 用错
     d["srs_suspended"] = bool(d.get("srs_suspended"))
+    d["meaning_edited"] = bool(d.get("meaning_edited"))
     # 发音槽：列表路径已经批量装好了（_attach_audios），单条路径在这里兜一下。
     # 兜底走 audio.slots() 会开两次短连接 —— 单条无所谓，别在循环里调它。
     if "audios" not in d:
@@ -414,25 +417,40 @@ def update_vocab(
     if note is not None:
         sets.append("note = ?")
         params.append(note.strip()[:2000] or None)
-    if meaning_cn is not None:
-        sets.append("meaning_cn = ?")
-        params.append(meaning_cn.strip()[:500] or None)
     if worth is not None:
         sets.append("worth = ?")
         params.append(1 if worth else 0)
-    if not sets:
+
+    # 改释义 = 写一条全局修正（services/overrides.py），不再只改这一行：
+    # 否则词卡照旧显示词典原文，删了生词再查回来修正也就丢了。
+    # 清空 = 恢复词典原文 —— 以前清空存 NULL，下次入册又被词典值 COALESCE 补回。
+    # 词典原文要在写事务**之外**查好（只读查询不叠进 tx()）。
+    fix: tuple[str, str, str] | None = None
+    if meaning_cn is not None:
+        with read() as conn:
+            row = conn.execute("SELECT lemma FROM vocab WHERE id = ?", (vocab_id,)).fetchone()
+        if row is None:
+            return None
+        entry = dictionary.lookup(str(row["lemma"]))
+        key = entry["word"] or dictionary.normalize_word(str(row["lemma"]))
+        fix = (key, meaning_cn.strip(), entry.get("meaning_cn_dict") or "")
+
+    if not sets and fix is None:
         return get_vocab(vocab_id)
 
-    sets.append("updated_at = ?")
-    params.append(now_iso())
-    params.append(vocab_id)
-
     with tx() as conn:
-        cur = conn.execute(f"UPDATE vocab SET {', '.join(sets)} WHERE id = ?", params)
-        if cur.rowcount == 0:
-            return None
-        # 释义改了要同步 FTS，否则检索结果还指向旧意思
-        _fts_sync(conn, vocab_id)
+        if sets:
+            sets.append("updated_at = ?")
+            params.extend([now_iso(), vocab_id])
+            cur = conn.execute(f"UPDATE vocab SET {', '.join(sets)} WHERE id = ?", params)
+            if cur.rowcount == 0:
+                return None
+        if fix is not None:
+            key, value, dict_meaning = fix
+            if value:
+                overrides.apply(conn, key, value)
+            else:
+                overrides.clear(conn, key, dict_meaning)
     return get_vocab(vocab_id)
 
 

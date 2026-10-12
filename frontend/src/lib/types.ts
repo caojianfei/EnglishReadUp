@@ -281,7 +281,12 @@ export interface WordEntry {
   phonetic_source: string
   /** 音标取自哪个原形（本地兜底路径命中时才有） */
   phonetic_of: string | null
+  /** 中文释义：有用户修正时就是修正值 */
   meaning_cn: string
+  /** 词典原文（不受用户修正影响），「恢复词典释义」时给人对照 */
+  meaning_cn_dict: string
+  /** 中文释义是否用了用户修正 */
+  meaning_edited: boolean
   meaning_en: string
   worth: number
   /** ECDICT 的考纲标签原样（zk gk cet4 …） */
@@ -479,6 +484,8 @@ export interface Vocab {
   phonetic_of: string | null
   pos: string | null
   meaning_cn: string | null
+  /** 释义是否是用户修正过的（改释义 = 全局修正，词卡里同步生效） */
+  meaning_edited: boolean
   meaning_en: string | null
   meaning_in_ctx: string | null
   example: string | null
