@@ -20,6 +20,7 @@ const TABS = [
   { to: '/vocab', label: '生词本', match: (p: string) => p.startsWith('/vocab') },
   { to: '/review', label: '复习', match: (p: string) => p.startsWith('/review') },
   { to: '/search', label: '检索', match: (p: string) => p.startsWith('/search') },
+  { to: '/pos', label: '词性', match: (p: string) => p.startsWith('/pos') },
 ]
 
 export default function AppNav() {
@@ -43,10 +44,10 @@ export default function AppNav() {
 
   return (
     <header className="er-toolbar sticky top-0 z-30">
-      <nav className="mx-auto flex max-w-[1100px] items-center gap-1 px-4 py-2">
+      <nav className="mx-auto flex max-w-[1100px] items-center gap-1 overflow-x-auto px-4 py-2">
         <Link
           to="/"
-          className="mr-3 text-sm font-semibold no-underline"
+          className="mr-3 shrink-0 whitespace-nowrap text-sm font-semibold no-underline"
           style={{ color: 'var(--ink)' }}
         >
           精读
@@ -60,7 +61,7 @@ export default function AppNav() {
               to={t.to}
               data-on={on ? '1' : undefined}
               data-testid={`nav-${t.label}`}
-              className="rounded-md px-2.5 py-1 text-xs no-underline transition-colors"
+              className="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 text-xs no-underline transition-colors"
               style={{ color: on ? 'var(--link)' : 'var(--ink-soft)', fontWeight: on ? 600 : 400 }}
             >
               {t.label}

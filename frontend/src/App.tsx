@@ -5,6 +5,7 @@ import { onOfflineChange } from './lib/api'
 import { loadPrefs, savePrefs } from './lib/prefs'
 import type { ReadingPrefs } from './lib/prefs'
 import Home from './pages/Home'
+import Pos from './pages/Pos'
 import Reader from './pages/Reader'
 import Review from './pages/Review'
 import Search from './pages/Search'
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/vocab" element={<Vocab />} />
         <Route path="/review" element={<Review />} />
         <Route path="/search" element={<Search />} />
+        <Route path="/pos" element={<Pos />} />
         <Route
           path="/a/:id"
           element={<Reader prefs={prefs} onChange={patch} isOffline={offline} />}
