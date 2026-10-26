@@ -436,6 +436,8 @@ export default function ReviewPage() {
                     {srcArticleId != null ? (
                       <Link
                         to={`/a/${srcArticleId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="er-muted ml-2 text-[11px] no-underline hover:underline"
                       >
                         {(card.sentence_article_title ?? `文章 #${srcArticleId}`).slice(0, 28)} ↗
