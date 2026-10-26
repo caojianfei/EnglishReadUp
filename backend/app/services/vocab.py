@@ -84,7 +84,9 @@ _SOURCES_SUB = (
 
 _ORDERS = {
     "recent": "v.id DESC",
-    "alpha": "LOWER(v.lemma) ASC",
+    # 补 id 做次序键：列表按 offset 翻页时，排序键相同的行在两次查询里可能换位，
+    # 会看到某条重复出现、另一条被跳过
+    "alpha": "LOWER(v.lemma) ASC, v.id DESC",
     # 值得记的排前面，同档次里划过次数多的排前面 —— 划过多次说明反复不认识
     "priority": "v.worth DESC, v.seen_count DESC, v.id DESC",
     "seen": "v.seen_count DESC, v.id DESC",

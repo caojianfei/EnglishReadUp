@@ -10,8 +10,8 @@
  *   按文章   —— 刚精读完一篇，把这批词过一遍
  */
 
-import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import AccentPhonetics from '../components/AccentPhonetics'
@@ -34,6 +34,9 @@ const SORTS = [
   { key: 'seen', label: '划过最多' },
   { key: 'alpha', label: '字母序' },
 ] as const
+
+/** 一页 30 条：筛选结果可能有几百词，整页铺出来既慢又不好定位 */
+const PAGE_SIZE = 30
 
 function WordRow({ v, articleId }: { v: Vocab; articleId: number | null }) {
   const qc = useQueryClient()
@@ -215,6 +218,9 @@ export default function VocabPage() {
   const [sort, setSort] = useState<'recent' | 'alpha' | 'priority' | 'seen'>('priority')
   const [rawQ, setRawQ] = useState(initialQ)
   const [q, setQ] = useState(initialQ)
+  const [page, setPage] = useState(1)
+  /** 翻页后把视口拉回列表顶部，否则人还停在上一页的页脚 */
+  const listTopRef = useRef<HTMLDivElement>(null)
 
   // 输入停顿 250ms 再发请求，否则每敲一个字母打一次接口
   useEffect(() => {
@@ -222,11 +228,16 @@ export default function VocabPage() {
     return () => window.clearTimeout(t)
   }, [rawQ])
 
+  // 换筛选条件后停留在一个不存在的页码上很别扭，直接回第一页
+  useEffect(() => {
+    setPage(1)
+  }, [status, onlyWorth, articleId, sort, q])
+
   const articles = useQuery({ queryKey: ['articles'], queryFn: () => api.listArticles(100, 0) })
   const stats = useQuery({ queryKey: ['vocab-stats'], queryFn: api.vocabStats })
 
   const list = useQuery({
-    queryKey: ['vocab', status, onlyWorth, articleId, sort, q],
+    queryKey: ['vocab', status, onlyWorth, articleId, sort, q, page],
     queryFn: () =>
       api.listVocab({
         status: status || undefined,
@@ -234,11 +245,26 @@ export default function VocabPage() {
         article_id: articleId,
         sort,
         q: q || undefined,
-        limit: 300,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
       }),
+    // 翻页时先留着上一页的卡片，避免整块闪成「加载中」
+    placeholderData: keepPreviousData,
   })
 
   const items = list.data?.items ?? []
+  const total = list.data?.total ?? 0
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  // 末页的词被删光后 page 会越界，退到最后一个有内容的页
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount)
+  }, [page, pageCount])
+
+  const goPage = (p: number) => {
+    setPage(p)
+    listTopRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
 
   return (
     <div style={{ background: 'var(--panel)', minHeight: '100vh' }}>
@@ -330,10 +356,16 @@ export default function VocabPage() {
         </div>
 
         <p className="er-muted mt-3 text-xs" data-testid="vocab-total">
-          筛出 {list.data?.total ?? 0} 词
+          筛出 {total} 词
+          {total > 0 ? (
+            <span data-testid="vocab-range">
+              {' · '}
+              第 {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} 条
+            </span>
+          ) : null}
         </p>
 
-        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div ref={listTopRef} className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {list.isLoading ? <p className="er-muted text-sm">加载中…</p> : null}
           {list.isError ? (
             <p className="text-sm text-red-600">读取失败：{(list.error as Error).message}</p>
@@ -347,6 +379,30 @@ export default function VocabPage() {
             <WordRow key={v.id} v={v} articleId={articleId} />
           ))}
         </div>
+
+        {pageCount > 1 ? (
+          <div className="mt-4 flex items-center justify-center gap-2" data-testid="vocab-pager">
+            <button
+              className="er-btn"
+              disabled={page <= 1}
+              onClick={() => goPage(page - 1)}
+              data-testid="vocab-prev"
+            >
+              上一页
+            </button>
+            <span className="er-muted min-w-[86px] text-center text-xs" data-testid="vocab-page">
+              第 {page} / {pageCount} 页
+            </span>
+            <button
+              className="er-btn"
+              disabled={page >= pageCount}
+              onClick={() => goPage(page + 1)}
+              data-testid="vocab-next"
+            >
+              下一页
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )
